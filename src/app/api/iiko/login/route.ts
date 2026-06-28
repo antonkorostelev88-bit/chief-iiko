@@ -4,7 +4,7 @@ import { env } from "@/lib/env";
 import { IikoError, loginToIiko, normalizeBaseUrl } from "@/lib/iiko";
 
 const loginSchema = z.object({
-  serverUrl: z.string().url().optional(),
+  serverUrl: z.string().trim().min(1).optional(),
   login: z.string().min(1, "Введите логин."),
   password: z.string().min(1, "Введите пароль."),
 });

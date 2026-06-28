@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 const envSchema = z.object({
-  IIKO_SERVER_URL: z.string().url().default("http://127.0.0.1:9080/resto"),
+  IIKO_SERVER_URL: z.string().trim().min(1).default("https://koza-dereza-slavnya-koza-co.iiko.it/resto"),
 });
 
 export const env = envSchema.parse({
