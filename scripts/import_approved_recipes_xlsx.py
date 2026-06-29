@@ -112,7 +112,7 @@ def parse_recipe_sheets(xlsx_path: Path) -> tuple[list[RecipeRow], dict[str, str
         worksheet = workbook[sheet_name]
         header_values = [normalize_text(cell.value) for cell in next(worksheet.iter_rows(min_row=1, max_row=1))]
         parent_col = find_header_index(header_values, "Вхождение в")
-        ingredient_col = find_header_index(header_values, "Состав")
+        ingredient_col = find_header_index(header_values, "Состав", "Блюдо")
         quantity_col = find_header_index(header_values, "Кол-во")
         unit_col = find_header_index(header_values, "ед.из", "Ед.из")
         article_col = find_header_index(header_values, "Артикл IIKO", "Артикл")

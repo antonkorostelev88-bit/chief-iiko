@@ -15,6 +15,12 @@ import {
 } from "@/lib/iiko";
 
 export type ProductSettingsInput = ProductionSettings & {
+  productName?: string;
+  kind?: Product["kind"];
+  type?: string;
+  article?: string;
+  price?: number | null;
+  productionPlace?: string;
   category?: string;
   recipeItems?: LocalRecipeIngredientInput[];
 };
@@ -22,6 +28,7 @@ export type ProductSettingsInput = ProductionSettings & {
 export type LocalRecipeIngredientInput = {
   ingredientId: string;
   grossQuantity: number | null;
+  netQuantity?: number | null;
   unit?: string;
 };
 
@@ -177,14 +184,33 @@ export function saveProductSettings(productId: string, settings: ProductSettings
       ).run(category, category, category, category, productId);
     }
 
+    const productPatch = db.prepare(
+      "SELECT name, kind, type, article, price, raw_json FROM iiko_products WHERE id = ?",
+    ).get(productId) as { name: string; kind: Product["kind"]; type: string | null; article: string | null; price: number | null; raw_json: string } | undefined;
+    if (productPatch) {
+      const productionPlace = emptyToNull(settings.productionPlace);
+      const rawJson = settings.productionPlace !== undefined ? writeTextToRaw(productPatch.raw_json, "Тип места приготовления", productionPlace) : productPatch.raw_json;
+      db.prepare(
+        "UPDATE iiko_products SET name = ?, kind = ?, type = ?, article = ?, price = ?, raw_json = ? WHERE id = ?",
+      ).run(
+        emptyToNull(settings.productName) ?? productPatch.name,
+        settings.kind ?? productPatch.kind,
+        emptyToNull(settings.type) ?? productPatch.type,
+        settings.article !== undefined ? emptyToNull(settings.article) : productPatch.article,
+        settings.price !== undefined ? numberOrNull(settings.price) : productPatch.price,
+        rawJson,
+        productId,
+      );
+    }
+
     db.prepare(
       "INSERT INTO product_production_settings (" +
-        "product_id, operation_name, batch_volume, batch_unit, batch_time_minutes, yield_amount, yield_unit, labor_minutes, hourly_rate, note, updated_at" +
-        ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) " +
+        "product_id, operation_name, batch_volume, batch_unit, batch_time_minutes, yield_amount, yield_unit, labor_minutes, hourly_rate, recipe_effective_from, note, updated_at" +
+        ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) " +
         "ON CONFLICT(product_id) DO UPDATE SET " +
         "operation_name = excluded.operation_name, batch_volume = excluded.batch_volume, batch_unit = excluded.batch_unit, " +
         "batch_time_minutes = excluded.batch_time_minutes, yield_amount = excluded.yield_amount, yield_unit = excluded.yield_unit, " +
-        "labor_minutes = excluded.labor_minutes, hourly_rate = excluded.hourly_rate, note = excluded.note, updated_at = excluded.updated_at",
+        "labor_minutes = excluded.labor_minutes, hourly_rate = excluded.hourly_rate, recipe_effective_from = excluded.recipe_effective_from, note = excluded.note, updated_at = excluded.updated_at",
     ).run(
       productId,
       emptyToNull(settings.operationName),
@@ -195,6 +221,7 @@ export function saveProductSettings(productId: string, settings: ProductSettings
       emptyToNull(settings.yieldUnit),
       numberOrNull(settings.laborMinutes),
       numberOrNull(settings.hourlyRate),
+      emptyToNull(settings.recipeEffectiveFrom),
       emptyToNull(settings.note),
       now,
     );
@@ -218,11 +245,11 @@ export function saveProductSettings(productId: string, settings: ProductSettings
     if (settings.recipeItems) {
       db.prepare("DELETE FROM local_recipe_items WHERE dish_product_id = ?").run(productId);
       const insertIngredient = db.prepare(
-        "INSERT INTO local_recipe_items (dish_product_id, ingredient_product_id, gross_quantity, unit, sort_order, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+        "INSERT INTO local_recipe_items (dish_product_id, ingredient_product_id, gross_quantity, net_quantity, unit, sort_order, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
       );
       for (const [index, ingredient] of settings.recipeItems.entries()) {
         if (!ingredient.ingredientId) continue;
-        insertIngredient.run(productId, ingredient.ingredientId, numberOrNull(ingredient.grossQuantity), emptyToNull(ingredient.unit), index, now);
+        insertIngredient.run(productId, ingredient.ingredientId, numberOrNull(ingredient.grossQuantity), numberOrNull(ingredient.netQuantity), emptyToNull(ingredient.unit), index, now);
       }
     }
 
@@ -495,7 +522,7 @@ export function deleteGoodsNotUsedInDishes() {
     .prepare(
       "SELECT id, name, kind, type, article, code, measure_unit, category, group_name, category_id, category_name, group_id, group_display_name, price, raw_json, is_local, " +
         "is_archived, " +
-        "operation_name, batch_volume, batch_unit, batch_time_minutes, yield_amount, yield_unit, labor_minutes, hourly_rate, note " +
+        "operation_name, batch_volume, batch_unit, batch_time_minutes, yield_amount, yield_unit, labor_minutes, hourly_rate, recipe_effective_from, note " +
         "FROM iiko_products " +
         "LEFT JOIN product_production_settings ON product_production_settings.product_id = iiko_products.id",
     )
@@ -569,7 +596,7 @@ export function getProductById(productId: string) {
     .prepare(
       "SELECT id, name, kind, type, article, code, measure_unit, category, group_name, category_id, category_name, group_id, group_display_name, price, raw_json, is_local, " +
         "is_archived, " +
-        "operation_name, batch_volume, batch_unit, batch_time_minutes, yield_amount, yield_unit, labor_minutes, hourly_rate, note " +
+        "operation_name, batch_volume, batch_unit, batch_time_minutes, yield_amount, yield_unit, labor_minutes, hourly_rate, recipe_effective_from, note " +
         "FROM iiko_products " +
         "LEFT JOIN product_production_settings ON product_production_settings.product_id = iiko_products.id " +
         "WHERE iiko_products.id = ?",
@@ -589,7 +616,7 @@ export function readLocalProducts(): LocalProductList {
     .prepare(
       "SELECT id, name, kind, type, article, code, measure_unit, category, group_name, category_id, category_name, group_id, group_display_name, price, raw_json, is_local, " +
         "is_archived, " +
-        "operation_name, batch_volume, batch_unit, batch_time_minutes, yield_amount, yield_unit, labor_minutes, hourly_rate, note " +
+        "operation_name, batch_volume, batch_unit, batch_time_minutes, yield_amount, yield_unit, labor_minutes, hourly_rate, recipe_effective_from, note " +
         "FROM iiko_products " +
         "LEFT JOIN product_production_settings ON product_production_settings.product_id = iiko_products.id " +
         "ORDER BY kind, group_display_name, category_name, name",
@@ -807,20 +834,24 @@ function migrate(db: DatabaseSync) {
     "yield_unit TEXT," +
     "labor_minutes REAL," +
     "hourly_rate REAL," +
+    "recipe_effective_from TEXT," +
     "note TEXT," +
     "updated_at TEXT NOT NULL" +
   ")");
   addColumn(db, "product_production_settings", "hourly_rate", "REAL");
+  addColumn(db, "product_production_settings", "recipe_effective_from", "TEXT");
 
   db.exec("CREATE TABLE IF NOT EXISTS local_recipe_items (" +
     "id INTEGER PRIMARY KEY AUTOINCREMENT," +
     "dish_product_id TEXT NOT NULL REFERENCES iiko_products(id) ON DELETE CASCADE," +
     "ingredient_product_id TEXT NOT NULL REFERENCES iiko_products(id) ON DELETE RESTRICT," +
     "gross_quantity REAL," +
+    "net_quantity REAL," +
     "unit TEXT," +
     "sort_order INTEGER NOT NULL DEFAULT 0," +
     "created_at TEXT NOT NULL" +
   ")");
+  addColumn(db, "local_recipe_items", "net_quantity", "REAL");
   db.exec("CREATE INDEX IF NOT EXISTS idx_local_recipe_items_dish ON local_recipe_items(dish_product_id)");
   db.exec("CREATE INDEX IF NOT EXISTS idx_local_recipe_items_ingredient ON local_recipe_items(ingredient_product_id)");
 
@@ -908,6 +939,7 @@ type LocalProductRow = {
   yield_unit: string | null;
   labor_minutes: number | null;
   hourly_rate: number | null;
+  recipe_effective_from: string | null;
   note: string | null;
 };
 
@@ -963,6 +995,7 @@ type LocalRecipeItemRow = {
   ingredient_article: string | null;
   ingredient_unit: string | null;
   gross_quantity: number | null;
+  net_quantity: number | null;
   unit: string | null;
 };
 
@@ -970,7 +1003,7 @@ function readRecipeForProduct(db: DatabaseSync, row: LocalProductRow, referenceM
   const localRows = db
     .prepare(
       "SELECT local_recipe_items.ingredient_product_id, iiko_products.name AS ingredient_name, iiko_products.article AS ingredient_article, " +
-        "iiko_products.measure_unit AS ingredient_unit, local_recipe_items.gross_quantity, local_recipe_items.unit " +
+        "iiko_products.measure_unit AS ingredient_unit, local_recipe_items.gross_quantity, local_recipe_items.net_quantity, local_recipe_items.unit " +
         "FROM local_recipe_items " +
         "JOIN iiko_products ON iiko_products.id = local_recipe_items.ingredient_product_id " +
         "WHERE local_recipe_items.dish_product_id = ? " +
@@ -987,6 +1020,7 @@ function readRecipeForProduct(db: DatabaseSync, row: LocalProductRow, referenceM
         article: item.ingredient_article ?? undefined,
         unit: item.unit ?? readMeasureUnitFromRaw(JSON.stringify({ mainUnit: item.ingredient_unit })) ?? resolveReferenceName(referenceMap, item.ingredient_unit ?? undefined) ?? defaultMeasureUnitName(item.ingredient_unit),
         grossQuantity: item.gross_quantity,
+        netQuantity: item.net_quantity,
       })),
     };
   }
@@ -1042,6 +1076,7 @@ function rowToProduct(row: LocalProductRow, referenceMap: Map<string, string>): 
       yieldUnit: row.yield_unit ?? undefined,
       laborMinutes: row.labor_minutes,
       hourlyRate: row.hourly_rate,
+      recipeEffectiveFrom: row.recipe_effective_from ?? undefined,
       note: row.note ?? undefined,
     },
   };
@@ -1265,6 +1300,18 @@ function readTextFromRaw(rawJson: string, key: string) {
   }
 }
 
+function writeTextToRaw(rawJson: string, key: string, value: string | null) {
+  let raw: Record<string, unknown>;
+  try {
+    raw = JSON.parse(rawJson) as Record<string, unknown>;
+  } catch {
+    raw = {};
+  }
+  if (value) raw[key] = value;
+  else delete raw[key];
+  return JSON.stringify(raw);
+}
+
 function readArticleFromRaw(rawJson: string) {
   try {
     const value = JSON.parse(rawJson) as { article?: unknown; sku?: unknown; num?: unknown };
@@ -1281,5 +1328,3 @@ function readText(value: unknown) {
   }
   return undefined;
 }
-
-

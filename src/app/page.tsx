@@ -4,7 +4,7 @@ import { CSSProperties, FormEvent, Fragment, ReactNode, useEffect, useMemo, useS
 
 type ProductKind = "semifinished" | "dish" | "other";
 type ActiveSheet = "goods" | "semifinished" | "dishes" | "workshops" | "calculator" | "costing" | "test" | "sales" | "sync";
-type ProductColumnKey = "name" | "category" | "article" | "code" | "unit" | "price" | "batchVolume" | "batchTime" | "hourlyRate" | "normCost" | "kgCost";
+type ProductColumnKey = "name" | "category" | "workshop" | "article" | "code" | "unit" | "price" | "batchVolume" | "activeTime" | "batchTime" | "hourlyRate" | "normCost" | "kgCost" | "yield";
 
 type ProductionSettings = {
   operationName?: string;
@@ -59,7 +59,7 @@ type ProductsSummary = {
 type Dashboard = { products: number; dishes: number; semifinished: number; goods: number; recipes: number; categories: number; revenueTotal: number | null; revenueKitchen: number | null; revenueBar: number | null };
 type LastSync = { id: number; finishedAt: string; source: string; totalProducts: number; totalRecipes: number };
 type ProductsResponse = { ok: boolean; error?: string; items?: Product[]; summary?: ProductsSummary; dashboard?: Dashboard; lastSync?: LastSync; dbPath?: string; sync?: { saved: number; recipes: number; references: number; syncedAt: string; dbPath: string } };
-type ProductFilters = { name: string; categories: string[]; article: string; code: string; unit: string; price: string; batchVolume: string; batchTime: string; hourlyRate: string; normCost: string; kgCost: string };
+type ProductFilters = { name: string; categories: string[]; workshop: string; article: string; code: string; unit: string; price: string; batchVolume: string; activeTime: string; batchTime: string; hourlyRate: string; normCost: string; kgCost: string; yield: string };
 type SalesFilters = { date: string; dish: string; category: string; department: string; amount: string; revenue: string };
 type IngredientDraft = { rowId: string; ingredientId: string; grossQuantity: string };
 type SalesRow = { id: string; date?: string; dishName: string; productId?: string; category?: string; department?: string; amount: number; revenue: number; concept?: string; code?: string; group?: string; avgPrice?: number; avgPriceNoDiscount?: number; revenueNoDiscount?: number; grossProfit?: number; markupPercent?: number; discountSum?: number; costPerUnit?: number; costTotal?: number; costPercent?: number; syncedAt: string };
@@ -69,12 +69,12 @@ type WorkshopMapping = { productionPlace: string; workshop: string; position?: s
 type WorkshopDefinition = { id: number; name: string; updatedAt?: string };
 type WorkshopsResponse = { ok: boolean; error?: string; items?: WorkshopMapping[]; dbPath?: string };
 type WorkshopListResponse = { ok: boolean; error?: string; items?: WorkshopDefinition[]; dbPath?: string };
-type CostingRow = { key: string; depth: number; name: string; kind: ProductKind | "unknown"; unit: string; netQuantity: number | null; batchVolume: number | null; batchTimeMinutes: number | null; hourlyRate: number | null; netTimeMinutes: number | null; netCost: number | null; normCost: number | null; kgCost: number | null };
+type CostingRow = { key: string; depth: number; name: string; kind: ProductKind | "unknown"; unit: string; productionPlace: string; netQuantity: number | null; batchVolume: number | null; activeTimeMinutes: number | null; serviceTimeMinutes: number | null; hourlyRate: number | null; activeNetTimeMinutes: number | null; serviceNetTimeMinutes: number | null; netCost: number | null; normCost: number | null; kgCost: number | null };
 
 const defaultServerUrl = "https://koza-dereza-slavnya-koza-co.iiko.it/resto";
 const emptySummary: ProductsSummary = { semifinished: { total: 0, byCategory: [] }, dishes: { total: 0, byCategory: [] }, goods: { total: 0, byCategory: [] }, allCategories: [] };
 const emptyDashboard: Dashboard = { products: 0, dishes: 0, semifinished: 0, goods: 0, recipes: 0, categories: 0, revenueTotal: null, revenueKitchen: null, revenueBar: null };
-const productColumnOrder: ProductColumnKey[] = ["name", "category", "article", "code", "unit", "price", "batchVolume", "batchTime", "hourlyRate", "normCost", "kgCost"];
+const productColumnOrder: ProductColumnKey[] = ["name", "category", "workshop", "article", "code", "unit", "price", "batchVolume", "activeTime", "batchTime", "hourlyRate", "normCost", "kgCost", "yield"];
 const baseProductColumnOrder: ProductColumnKey[] = ["name", "category", "article", "code", "unit", "price"];
 const calculatorProductionPlaces = [
   "Гриль/Гарниры",
@@ -284,7 +284,7 @@ export default function Home() {
 }
 
 function ProductSheet({ title, kind, items, allItems, recipes, onCreate, onEdit, onChanged }: { title: string; kind: ProductKind; items: Product[]; allItems: Product[]; recipes: number; onCreate: (kind: ProductKind) => void; onEdit: (product: Product) => void; onChanged: () => void }) {
-  const [filters, setFilters] = useState<ProductFilters>({ name: "", categories: [], article: "", code: "", unit: "", price: "", batchVolume: "", batchTime: "", hourlyRate: "", normCost: "", kgCost: "" });
+  const [filters, setFilters] = useState<ProductFilters>({ name: "", categories: [], workshop: "", article: "", code: "", unit: "", price: "", batchVolume: "", activeTime: "", batchTime: "", hourlyRate: "", normCost: "", kgCost: "", yield: "" });
   const [columns, setColumns] = useState<ProductColumnKey[]>(defaultProductColumns(kind));
   const [columnWidths, setColumnWidths] = useState<Partial<Record<ProductColumnKey, number>>>({});
   const [draggedColumn, setDraggedColumn] = useState<ProductColumnKey | undefined>();
@@ -566,6 +566,7 @@ function ProductSheet({ title, kind, items, allItems, recipes, onCreate, onEdit,
       setDetailsById((current) => ({ ...current, [productId]: data.product! }));
       setRecipeDraftsById((current) => ({ ...current, [productId]: buildInlineRecipeDraft(data.product!.recipe?.items ?? []) }));
       setRecipeStatus((current) => ({ ...current, [productId]: "Состав сохранен." }));
+      notifyProductSettingsChanged(productId);
       onChanged();
     } catch {
       setRecipeStatus((current) => ({ ...current, [productId]: "Не удалось сохранить состав." }));
@@ -595,7 +596,7 @@ function ProductSheet({ title, kind, items, allItems, recipes, onCreate, onEdit,
 function InlineRecipeEditor({ rows, productById, status, isSaving, onChange, onEdit, onProductChanged, onSave }: { rows: InlineRecipeRow[]; productById: Map<string, Product>; status?: string; isSaving: boolean; onChange: (index: number, patch: Partial<InlineRecipeRow>) => void; onEdit: (product: Product) => void; onProductChanged: () => void; onSave: () => void }) {
   return (
     <div className="inline-recipe-editor">
-      <div className="inline-recipe-head"><strong>Ингредиент</strong><span>Ед.</span><span>Нетто, кг</span><span>Время нетто, мин</span><span>Стоимость нетто, руб</span><span>Норма, кг</span><span>Время нормы, мин</span><span>Ст. нормы, руб</span><span>Стоимость 1 кг, руб</span></div>
+      <div className="inline-recipe-head"><strong>Ингредиент</strong><span>Ед.</span><span>Нетто, кг</span><span>Активное нетто, мин</span><span>Сервисное нетто, мин</span><span>Стоимость нетто, руб</span><span>Норма, кг</span><span>Активное нормы, мин</span><span>Сервисное нормы, мин</span><span>Стоимость 1 кг, руб</span></div>
       {rows.length > 0 ? <RecipeTreeRows rows={rows} productById={productById} editable onChange={onChange} onEdit={onEdit} onProductChanged={onProductChanged} /> : <div className="inline-recipe-empty">Состав пока не найден.</div>}
       <div className="inline-recipe-actions"><span>{status ?? ""}</span><button className="secondary" disabled={isSaving || rows.length === 0} onClick={onSave} type="button">{isSaving ? "Сохраняю..." : "Сохранить состав"}</button></div>
     </div>
@@ -642,11 +643,12 @@ function RecipeTreeRows({ rows, productById, editable = false, depth = 0, multip
               {canEditProduction ? <button className={isNestedOpen ? "inline-ingredient-button active" : "inline-ingredient-button"} onClick={() => void toggleNested(ingredient)} onDoubleClick={(event) => { event.stopPropagation(); onEdit(ingredient); }} title="Один клик раскрывает состав, двойной открывает карточку" type="button">{row.name}</button> : <strong>{row.name}</strong>}
               {editable ? <input value={row.unit} onChange={(event) => onChange?.(index, { unit: event.target.value })} /> : <span>{row.unit}</span>}
               {editable ? <input value={row.grossQuantity} onChange={(event) => onChange?.(index, { grossQuantity: event.target.value })} inputMode="decimal" /> : <span>{formatScaledNet(row, multiplier)}</span>}
-              <span>{ingredient ? formatNetProductionTime(row, ingredient, multiplier) : ""}</span>
+              <span>{ingredient ? formatNetActiveProductionTime(row, ingredient, multiplier) : ""}</span>
+              <span>{ingredient ? formatNetServiceProductionTime(row, ingredient, multiplier) : ""}</span>
               <span>{ingredient ? formatNetProductionCost(row, ingredient, multiplier) : ""}</span>
               {canEditProduction ? <ProductBatchValueCell item={ingredient} field="batchVolume" onChanged={onProductChanged} /> : <span></span>}
+              {canEditProduction ? <ProductBatchValueCell item={ingredient} field="laborMinutes" onChanged={onProductChanged} /> : <span></span>}
               {canEditProduction ? <ProductBatchValueCell item={ingredient} field="batchTimeMinutes" onChanged={onProductChanged} /> : <span></span>}
-              <span>{ingredient ? formatProductionNormCost(ingredient) : ""}</span>
               <span>{ingredient ? formatProductionKgCost(ingredient) : ""}</span>
             </div>
             {isNestedOpen ? nestedStatus ? <div className="inline-nested-message" style={{ "--recipe-depth": depth + 1 } as CSSProperties}>{nestedStatus}</div> : nestedRows.length ? <RecipeTreeRows rows={nestedRows} productById={productById} depth={depth + 1} multiplier={childMultiplier} onEdit={onEdit} onProductChanged={onProductChanged} /> : <div className="inline-nested-message" style={{ "--recipe-depth": depth + 1 } as CSSProperties}>Состав вложенной заготовки пока не найден.</div> : null}
@@ -661,19 +663,69 @@ function getProductColumns(onEdit: (product: Product) => void, onChanged: () => 
   return {
     name: { label: "Название", width: "34%", filter: <input className="header-filter" value={filters.name} onChange={(e) => setFilters({ ...filters, name: e.target.value })} placeholder="Поиск" />, render: (item: Product) => <button className="name-cell-button" onDoubleClick={(event) => { event.stopPropagation(); if (event.button === 0) onEdit(item); }} title="Открыть карточку двойным нажатием" type="button">{item.name}{item.isLocal ? <em className="local-mark">локально</em> : null}</button> },
     category: { label: "Категория", width: "25%", filter: <CategoryMultiFilter categories={categories} selected={filters.categories} onSelected={(next) => setFilters({ ...filters, categories: next })} />, render: (item: Product) => item.group ?? item.category ?? "Без категории" },
+    workshop: { label: "Цех", width: "16%", filter: <input className="header-filter" value={filters.workshop} onChange={(e) => setFilters({ ...filters, workshop: e.target.value })} placeholder="Поиск" />, render: (item: Product) => cookingPlaceLabel(item, "Не определен") },
     article: { label: "Артикул", width: "12%", filter: <input className="header-filter" value={filters.article} onChange={(e) => setFilters({ ...filters, article: e.target.value })} placeholder="Поиск" />, render: (item: Product) => item.article ?? "" },
     code: { label: "Код", width: "10%", filter: <input className="header-filter" value={filters.code} onChange={(e) => setFilters({ ...filters, code: e.target.value })} placeholder="Поиск" />, render: (item: Product) => item.code ?? "" },
     unit: { label: "Ед.", width: "8%", filter: <input className="header-filter" value={filters.unit} onChange={(e) => setFilters({ ...filters, unit: e.target.value })} placeholder="Ед." />, render: (item: Product) => item.measureUnit ?? "" },
     price: { label: "Цена", width: "11%", filter: <input className="header-filter" value={filters.price} onChange={(e) => setFilters({ ...filters, price: e.target.value })} placeholder="Поиск" />, render: (item: Product) => typeof item.price === "number" ? formatMoney(item.price) : "" },
     batchVolume: { label: "Норма, кг", width: "13%", filter: <input className="header-filter" value={filters.batchVolume} onChange={(e) => setFilters({ ...filters, batchVolume: e.target.value })} placeholder="Поиск" />, render: (item: Product) => <ProductBatchValueCell item={item} field="batchVolume" onChanged={onChanged} /> },
-    batchTime: { label: "Время, мин", width: "13%", filter: <input className="header-filter" value={filters.batchTime} onChange={(e) => setFilters({ ...filters, batchTime: e.target.value })} placeholder="Мин" />, render: (item: Product) => <ProductBatchValueCell item={item} field="batchTimeMinutes" onChanged={onChanged} /> },
+    activeTime: { label: "Активное, мин", width: "13%", filter: <input className="header-filter" value={filters.activeTime} onChange={(e) => setFilters({ ...filters, activeTime: e.target.value })} placeholder="Мин" />, render: (item: Product) => <ProductBatchValueCell item={item} field="laborMinutes" onChanged={onChanged} /> },
+    batchTime: { label: "Сервисное, мин", width: "13%", filter: <input className="header-filter" value={filters.batchTime} onChange={(e) => setFilters({ ...filters, batchTime: e.target.value })} placeholder="Мин" />, render: (item: Product) => <ProductBatchValueCell item={item} field="batchTimeMinutes" onChanged={onChanged} /> },
     hourlyRate: { label: "Ставка, руб", width: "12%", filter: <input className="header-filter" value={filters.hourlyRate} onChange={(e) => setFilters({ ...filters, hourlyRate: e.target.value })} placeholder="Поиск" />, render: (item: Product) => <ProductBatchValueCell item={item} field="hourlyRate" onChanged={onChanged} /> },
     normCost: { label: "Ст. нормы, руб", width: "13%", filter: <input className="header-filter" value={filters.normCost} onChange={(e) => setFilters({ ...filters, normCost: e.target.value })} placeholder="Поиск" />, render: (item: Product) => formatProductionNormCost(item) },
     kgCost: { label: "Ст. 1 кг, руб", width: "13%", filter: <input className="header-filter" value={filters.kgCost} onChange={(e) => setFilters({ ...filters, kgCost: e.target.value })} placeholder="Поиск" />, render: (item: Product) => formatProductionKgCost(item) },
+    yield: { label: "Выход", width: "16%", filter: <input className="header-filter" value={filters.yield} onChange={(e) => setFilters({ ...filters, yield: e.target.value })} placeholder="Поиск" />, render: (item: Product) => <ProductYieldCell item={item} onChanged={onChanged} /> },
   } satisfies Record<ProductColumnKey, { label: string; width: string; filter: ReactNode; render: (item: Product) => ReactNode }>;
 }
 
-function ProductBatchValueCell({ item, field, onChanged }: { item: Product; field: "batchVolume" | "batchTimeMinutes" | "hourlyRate"; onChanged: () => void }) {
+function ProductYieldCell({ item, onChanged }: { item: Product; onChanged: () => void }) {
+  const [amount, setAmount] = useState(numberToText(item.production?.yieldAmount));
+  const [unit, setUnit] = useState(item.production?.yieldUnit ?? item.measureUnit ?? item.production?.batchUnit ?? "");
+  const [isSaving, setIsSaving] = useState(false);
+
+  useEffect(() => {
+    setAmount(numberToText(item.production?.yieldAmount));
+    setUnit(item.production?.yieldUnit ?? item.measureUnit ?? item.production?.batchUnit ?? "");
+  }, [item.id, item.measureUnit, item.production]);
+
+  async function save() {
+    const currentAmount = numberToText(item.production?.yieldAmount);
+    const currentUnit = item.production?.yieldUnit ?? item.measureUnit ?? item.production?.batchUnit ?? "";
+    if (amount.trim() === currentAmount && unit.trim() === currentUnit) return;
+    setIsSaving(true);
+    try {
+      const response = await fetch("/api/local/product-settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          productId: item.id,
+          category: item.group ?? item.category,
+          operationName: item.production?.operationName,
+          batchVolume: item.production?.batchVolume ?? null,
+          batchUnit: item.production?.batchUnit ?? item.measureUnit,
+          batchTimeMinutes: item.production?.batchTimeMinutes ?? null,
+          yieldAmount: parseOptionalNumber(amount),
+          yieldUnit: unit,
+          laborMinutes: item.production?.laborMinutes ?? null,
+          hourlyRate: item.production?.hourlyRate ?? null,
+          note: item.production?.note,
+        }),
+      });
+      if (response.ok) onChanged();
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  return (
+    <span className="yield-cell">
+      <input value={amount} onBlur={() => void save()} onChange={(event) => setAmount(event.target.value)} inputMode="decimal" placeholder="0" disabled={isSaving} />
+      <input value={unit} onBlur={() => void save()} onChange={(event) => setUnit(event.target.value)} placeholder="ед." disabled={isSaving} />
+    </span>
+  );
+}
+
+function ProductBatchValueCell({ item, field, onChanged }: { item: Product; field: "batchVolume" | "batchTimeMinutes" | "laborMinutes" | "hourlyRate"; onChanged: () => void }) {
   const [value, setValue] = useState(numberToText(item.production?.[field]));
   const [isSaving, setIsSaving] = useState(false);
 
@@ -698,7 +750,7 @@ function ProductBatchValueCell({ item, field, onChanged }: { item: Product; fiel
           batchTimeMinutes: field === "batchTimeMinutes" ? parseOptionalNumber(value) : item.production?.batchTimeMinutes ?? null,
           yieldAmount: item.production?.yieldAmount ?? null,
           yieldUnit: item.production?.yieldUnit,
-          laborMinutes: item.production?.laborMinutes ?? null,
+          laborMinutes: field === "laborMinutes" ? parseOptionalNumber(value) : item.production?.laborMinutes ?? null,
           hourlyRate: field === "hourlyRate" ? parseOptionalNumber(value) : item.production?.hourlyRate ?? null,
           note: item.production?.note,
         }),
@@ -766,7 +818,7 @@ function CalculatorSheet({ items, onEdit, onChanged }: { items: Product[]; onEdi
         </div>
       </div>
       <div className="calculator-list">
-        <div className="calculator-row calculator-head"><strong>Тип места приготовления</strong><span>Позиций</span><span>Объем партии</span><span>Время партии, мин</span><span>Статус</span></div>
+        <div className="calculator-row calculator-head"><strong>Тип места приготовления</strong><span>Позиций</span><span>Объем партии</span><span>Сервисное время, мин</span><span>Статус</span></div>
         {places.map((place) => {
           const isOpen = openedPlace === place.place;
           return (
@@ -930,7 +982,7 @@ function CalculatorProductionRow({ item, onChanged, onEdit }: { item: Product; o
     }
   }
 
-  return <div className="calculator-name-row editable-calculator-row"><button className="calculator-inline-name" onDoubleClick={(event) => { if (event.button === 0) onEdit(item); }} title="Открыть карточку двойным нажатием" type="button">{item.name}</button><input value={batchVolume} onChange={(event) => setBatchVolume(event.target.value)} inputMode="decimal" placeholder="Объем" /><input value={batchTimeMinutes} onChange={(event) => setBatchTimeMinutes(event.target.value)} inputMode="decimal" placeholder="Мин" /><button className="small-button" disabled={isSaving} onClick={() => void save()} type="button">{isSaving ? "..." : "OK"}</button><span>{status}</span></div>;
+  return <div className="calculator-name-row editable-calculator-row"><button className="calculator-inline-name" onDoubleClick={(event) => { if (event.button === 0) onEdit(item); }} title="Открыть карточку двойным нажатием" type="button">{item.name}</button><input value={batchVolume} onChange={(event) => setBatchVolume(event.target.value)} inputMode="decimal" placeholder="Объем" /><input value={batchTimeMinutes} onChange={(event) => setBatchTimeMinutes(event.target.value)} inputMode="decimal" placeholder="Сервис, мин" /><button className="small-button" disabled={isSaving} onClick={() => void save()} type="button">{isSaving ? "..." : "OK"}</button><span>{status}</span></div>;
 }
 
 function CostingSheet({ items, onEdit }: { items: Product[]; onEdit: (product: Product) => void }) {
@@ -994,7 +1046,7 @@ function CostingSheet({ items, onEdit }: { items: Product[]; onEdit: (product: P
           {selected ? <button className="secondary" onClick={() => onEdit(selected)} type="button">Карточка</button> : null}
         </div>
       </div>
-      {selected ? <div className="costing-summary"><strong>{selected.name}</strong><span>1 порция: {formatMinutes(portionTotal.minutes)} / {formatRubles(portionTotal.cost)}</span><span>Партия: {formatMinutes(batchTotal.minutes)} / {formatRubles(batchTotal.cost)}</span><em>{status}</em></div> : null}
+      {selected ? <div className="costing-summary"><strong>{selected.name}</strong><span>1 порция: акт. {formatMinutes(portionTotal.activeMinutes)}, серв. {formatMinutes(portionTotal.serviceMinutes)}</span><span>Партия: акт. {formatMinutes(batchTotal.activeMinutes)}, серв. {formatMinutes(batchTotal.serviceMinutes)}</span><span>{formatRubles(portionTotal.cost + batchTotal.cost)}</span><em>{status}</em></div> : null}
       <CostingTable rows={portionRows} title={selected?.kind === "semifinished" ? "Текущая норма заготовки" : "1 порция"} />
       <CostingTable rows={batchRows} title={selected?.kind === "semifinished" ? "Полная партия заготовки" : "Партии верхних заготовок"} />
     </section>
@@ -1003,15 +1055,30 @@ function CostingSheet({ items, onEdit }: { items: Product[]; onEdit: (product: P
 
 function CostingTable({ rows, title }: { rows: CostingRow[]; title: string }) {
   const total = summarizeCostRows(rows);
+  const groups = groupCostRowsByWorkshop(rows);
   return (
     <div className="costing-table-block">
-      <div className="costing-table-title"><strong>{title}</strong><span>Итого: {formatMinutes(total.minutes)} / {formatRubles(total.cost)}</span></div>
+      <div className="costing-table-title"><strong>{title}</strong><span>Активное: {formatMinutes(total.activeMinutes)} · Сервисное: {formatMinutes(total.serviceMinutes)} · {formatRubles(total.cost)}</span></div>
       <div className="costing-table">
-        <div className="costing-row costing-head"><strong>Наименование</strong><span>Ед.</span><span>Нетто</span><span>Норма</span><span>Время нормы</span><span>Время нетто</span><span>Стоимость нетто</span><span>Стоимость 1 кг</span></div>
-        {rows.length ? rows.map((row) => <div className="costing-row" key={row.key} style={{ "--recipe-depth": row.depth } as CSSProperties}><strong>{row.name}</strong><span>{row.unit}</span><span>{formatOptionalNumber(row.netQuantity)}</span><span>{formatOptionalNumber(row.batchVolume)}</span><span>{formatOptionalNumber(row.batchTimeMinutes)}</span><span>{formatOptionalNumber(row.netTimeMinutes)}</span><span>{formatRubles(row.netCost)}</span><span>{formatRubles(row.kgCost)}</span></div>) : <div className="inline-recipe-empty">Нет данных для расчета.</div>}
+        <div className="costing-row costing-head"><strong>Заготовка / ингредиент</strong><span>Ед.</span><span>Нетто</span><span>Норма</span><span>Активное, мин</span><span>Сервисное, мин</span><span>Стоимость</span><span>Стоимость 1 кг</span></div>
+        {groups.length ? groups.map((group) => (
+          <Fragment key={group.workshop}>
+            <div className="costing-workshop-row"><strong>{group.workshop}</strong><span>Активное: {formatMinutes(group.total.activeMinutes)}</span><span>Сервисное: {formatMinutes(group.total.serviceMinutes)}</span><span>{formatRubles(group.total.cost)}</span></div>
+            {group.rows.map((row) => <div className="costing-row" key={row.key} style={{ "--recipe-depth": row.depth } as CSSProperties}><strong>{row.name}</strong><span>{row.unit}</span><span>{formatOptionalNumber(row.netQuantity)}</span><span>{formatOptionalNumber(row.batchVolume)}</span><span>{formatOptionalNumber(row.activeNetTimeMinutes ?? row.activeTimeMinutes)}</span><span>{formatOptionalNumber(row.serviceNetTimeMinutes ?? row.serviceTimeMinutes)}</span><span>{formatRubles(row.netCost)}</span><span>{formatRubles(row.kgCost)}</span></div>)}
+          </Fragment>
+        )) : <div className="inline-recipe-empty">Нет данных для расчета.</div>}
       </div>
     </div>
   );
+}
+
+function groupCostRowsByWorkshop(rows: CostingRow[]) {
+  const groups = new Map<string, CostingRow[]>();
+  for (const row of rows) {
+    const key = row.productionPlace || "Без цеха";
+    groups.set(key, [...(groups.get(key) ?? []), row]);
+  }
+  return Array.from(groups.entries()).map(([workshop, groupRows]) => ({ workshop, rows: groupRows, total: summarizeCostRows(groupRows) })).sort((a, b) => a.workshop.localeCompare(b.workshop, "ru"));
 }
 
 async function fetchProductDetail(productId: string, cache: Map<string, Product>, productById: Map<string, Product>) {
@@ -1066,22 +1133,24 @@ async function buildRecipeCostRows(product: Product, multiplier: number, depth: 
 }
 
 function buildIngredientCostRow(name: string, kind: ProductKind | "unknown", unit: string, netQuantity: number | null, depth: number, key: string): CostingRow {
-  return { key, depth, name, kind, unit, netQuantity, batchVolume: null, batchTimeMinutes: null, hourlyRate: null, netTimeMinutes: null, netCost: null, normCost: null, kgCost: null };
+  return { key, depth, name, kind, unit, productionPlace: "Без цеха", netQuantity, batchVolume: null, activeTimeMinutes: null, serviceTimeMinutes: null, hourlyRate: null, activeNetTimeMinutes: null, serviceNetTimeMinutes: null, netCost: null, normCost: null, kgCost: null };
 }
 
 function buildOperationCostRow(product: Product, netQuantity: number | null, depth: number, key: string): CostingRow {
   const batchVolume = product.production?.batchVolume ?? null;
-  const batchTimeMinutes = product.production?.batchTimeMinutes ?? null;
+  const serviceTimeMinutes = product.production?.batchTimeMinutes ?? null;
+  const activeTimeMinutes = product.production?.laborMinutes ?? null;
   const hourlyRate = product.production?.hourlyRate ?? null;
-  const netTimeMinutes = product.kind === "semifinished" && typeof netQuantity === "number" && typeof batchVolume === "number" && typeof batchTimeMinutes === "number" && batchVolume > 0 ? (netQuantity / batchVolume) * batchTimeMinutes : null;
-  const netCost = typeof netTimeMinutes === "number" && typeof hourlyRate === "number" ? (netTimeMinutes / 60) * hourlyRate : null;
-  const normCost = typeof batchTimeMinutes === "number" && typeof hourlyRate === "number" ? (batchTimeMinutes / 60) * hourlyRate : null;
+  const activeNetTimeMinutes = product.kind === "semifinished" && typeof netQuantity === "number" && typeof batchVolume === "number" && typeof activeTimeMinutes === "number" && batchVolume > 0 ? (netQuantity / batchVolume) * activeTimeMinutes : null;
+  const serviceNetTimeMinutes = product.kind === "semifinished" && typeof netQuantity === "number" && typeof batchVolume === "number" && typeof serviceTimeMinutes === "number" && batchVolume > 0 ? (netQuantity / batchVolume) * serviceTimeMinutes : null;
+  const netCost = typeof activeNetTimeMinutes === "number" && typeof hourlyRate === "number" ? (activeNetTimeMinutes / 60) * hourlyRate : null;
+  const normCost = typeof activeTimeMinutes === "number" && typeof hourlyRate === "number" ? (activeTimeMinutes / 60) * hourlyRate : null;
   const kgCost = typeof normCost === "number" && typeof batchVolume === "number" && batchVolume > 0 ? normCost / batchVolume : null;
-  return { key, depth, name: product.name, kind: product.kind, unit: product.measureUnit ?? product.production?.batchUnit ?? "", netQuantity, batchVolume, batchTimeMinutes, hourlyRate, netTimeMinutes, netCost, normCost, kgCost };
+  return { key, depth, name: product.name, kind: product.kind, unit: product.measureUnit ?? product.production?.batchUnit ?? "", productionPlace: cookingPlaceLabel(product, "Без цеха"), netQuantity, batchVolume, activeTimeMinutes, serviceTimeMinutes, hourlyRate, activeNetTimeMinutes, serviceNetTimeMinutes, netCost, normCost, kgCost };
 }
 
 function summarizeCostRows(rows: CostingRow[]) {
-  return rows.reduce((total, row) => ({ minutes: total.minutes + (row.netTimeMinutes ?? 0), cost: total.cost + (row.netCost ?? 0) }), { minutes: 0, cost: 0 });
+  return rows.reduce((total, row) => ({ activeMinutes: total.activeMinutes + (row.activeNetTimeMinutes ?? 0), serviceMinutes: total.serviceMinutes + (row.serviceNetTimeMinutes ?? 0), cost: total.cost + (row.netCost ?? 0) }), { activeMinutes: 0, serviceMinutes: 0, cost: 0 });
 }
 
 function formatOptionalNumber(value: number | null | undefined) {
@@ -1182,26 +1251,34 @@ function nestedMultiplierFor(row: InlineRecipeRow, item: Product, multiplier: nu
   return netQuantity / batchVolume;
 }
 
-function formatNetProductionTime(row: InlineRecipeRow, item: Product, multiplier = 1) {
+function formatNetActiveProductionTime(row: InlineRecipeRow, item: Product, multiplier = 1) {
   const netQuantity = scaledNetValue(row, multiplier);
   const batchVolume = item.production?.batchVolume;
-  const batchTimeMinutes = item.production?.batchTimeMinutes;
-  if (typeof netQuantity !== "number" || typeof batchVolume !== "number" || typeof batchTimeMinutes !== "number" || batchVolume <= 0) return "";
-  return formatMoney((netQuantity / batchVolume) * batchTimeMinutes);
+  const activeTimeMinutes = item.production?.laborMinutes;
+  if (typeof netQuantity !== "number" || typeof batchVolume !== "number" || typeof activeTimeMinutes !== "number" || batchVolume <= 0) return "";
+  return formatMoney((netQuantity / batchVolume) * activeTimeMinutes);
+}
+
+function formatNetServiceProductionTime(row: InlineRecipeRow, item: Product, multiplier = 1) {
+  const netQuantity = scaledNetValue(row, multiplier);
+  const batchVolume = item.production?.batchVolume;
+  const serviceTimeMinutes = item.production?.batchTimeMinutes;
+  if (typeof netQuantity !== "number" || typeof batchVolume !== "number" || typeof serviceTimeMinutes !== "number" || batchVolume <= 0) return "";
+  return formatMoney((netQuantity / batchVolume) * serviceTimeMinutes);
 }
 
 function formatLaborCostPerKg(item: Product, employeeHourPrice: number | null) {
   const batchVolume = item.production?.batchVolume;
-  const batchTimeMinutes = item.production?.batchTimeMinutes;
-  if (typeof employeeHourPrice !== "number" || typeof batchVolume !== "number" || typeof batchTimeMinutes !== "number" || batchVolume <= 0) return "";
-  return formatMoney((batchTimeMinutes / batchVolume / 60) * employeeHourPrice);
+  const activeTimeMinutes = item.production?.laborMinutes;
+  if (typeof employeeHourPrice !== "number" || typeof batchVolume !== "number" || typeof activeTimeMinutes !== "number" || batchVolume <= 0) return "";
+  return formatMoney((activeTimeMinutes / batchVolume / 60) * employeeHourPrice);
 }
 
 function productionNormCost(item: Product) {
-  const batchTimeMinutes = item.production?.batchTimeMinutes;
+  const activeTimeMinutes = item.production?.laborMinutes;
   const hourlyRate = item.production?.hourlyRate;
-  if (typeof batchTimeMinutes !== "number" || typeof hourlyRate !== "number") return null;
-  return (hourlyRate / 60) * batchTimeMinutes;
+  if (typeof activeTimeMinutes !== "number" || typeof hourlyRate !== "number") return null;
+  return (hourlyRate / 60) * activeTimeMinutes;
 }
 
 function formatProductionNormCost(item: Product) {
@@ -1214,6 +1291,13 @@ function formatProductionKgCost(item: Product) {
   const batchVolume = item.production?.batchVolume;
   if (typeof normCost !== "number" || typeof batchVolume !== "number" || batchVolume <= 0) return "";
   return formatMoney(normCost / batchVolume);
+}
+
+function formatYield(item: Product) {
+  const amount = item.production?.yieldAmount;
+  const unit = item.production?.yieldUnit ?? item.measureUnit ?? item.production?.batchUnit ?? "";
+  if (typeof amount !== "number") return unit;
+  return [formatMoney(amount), unit].filter(Boolean).join(" ");
 }
 
 function formatNetProductionCost(row: InlineRecipeRow, item: Product, multiplier = 1) {
@@ -1389,7 +1473,7 @@ function createNoun(kind: ProductKind) { if (kind === "semifinished") return "з
 function buildCategories(items: Product[]) { const counts = new Map<string, { key: string; name: string; count: number }>(); for (const item of items) { const key = productCategoryKey(item); const name = item.group ?? item.category ?? "Без категории"; const current = counts.get(key) ?? { key, name, count: 0 }; current.count += 1; counts.set(key, current); } return Array.from(counts.values()).sort((a, b) => b.count - a.count || a.name.localeCompare(b.name, "ru")); }
 function mergeCategories(current: { key: string; name: string; count: number }[], next: { key: string; name: string; count: number }[]) { const map = new Map(current.map((item) => [item.key, item])); for (const item of next) map.set(item.key, item); return Array.from(map.values()).sort((a, b) => b.count - a.count || a.name.localeCompare(b.name, "ru")); }
 function productCategoryKey(product: Product) { return product.groupId ?? product.categoryId ?? product.group ?? product.category ?? "uncategorized"; }
-function matchesProductFilters(item: Product, filters: ProductFilters) { return includes(item.name, filters.name) && (filters.categories.length === 0 || filters.categories.includes(productCategoryKey(item))) && includes(item.article, filters.article) && includes(item.code, filters.code) && includes(item.measureUnit, filters.unit) && includes(typeof item.price === "number" ? String(item.price) : "", filters.price) && includes(numberToText(item.production?.batchVolume), filters.batchVolume) && includes(numberToText(item.production?.batchTimeMinutes), filters.batchTime) && includes(numberToText(item.production?.hourlyRate), filters.hourlyRate) && includes(formatProductionNormCost(item), filters.normCost) && includes(formatProductionKgCost(item), filters.kgCost); }
+function matchesProductFilters(item: Product, filters: ProductFilters) { return includes(item.name, filters.name) && (filters.categories.length === 0 || filters.categories.includes(productCategoryKey(item))) && includes(cookingPlaceLabel(item, "Не определен"), filters.workshop) && includes(item.article, filters.article) && includes(item.code, filters.code) && includes(item.measureUnit, filters.unit) && includes(typeof item.price === "number" ? String(item.price) : "", filters.price) && includes(numberToText(item.production?.batchVolume), filters.batchVolume) && includes(numberToText(item.production?.laborMinutes), filters.activeTime) && includes(numberToText(item.production?.batchTimeMinutes), filters.batchTime) && includes(numberToText(item.production?.hourlyRate), filters.hourlyRate) && includes(formatProductionNormCost(item), filters.normCost) && includes(formatProductionKgCost(item), filters.kgCost) && includes(formatYield(item), filters.yield); }
 function matchesSalesFilters(item: SalesRow, filters: SalesFilters) { return includes(item.date, filters.date) && includes(item.dishName, filters.dish) && includes(item.category, filters.category) && includes(item.concept ?? item.department, filters.department) && includes(String(item.amount), filters.amount) && includes(String(item.revenue), filters.revenue); }
 function aggregateSales(items: SalesRow[], getName: (row: SalesRow) => string) { const map = new Map<string, { name: string; amount: number; revenue: number }>(); for (const item of items) { const name = getName(item); const current = map.get(name) ?? { name, amount: 0, revenue: 0 }; current.amount += item.amount; current.revenue += item.revenue; map.set(name, current); } return Array.from(map.values()).sort((a, b) => b.revenue - a.revenue || a.name.localeCompare(b.name, "ru")); }
 function includes(value: string | undefined, query: string) { return !query.trim() || (value ?? "").toLowerCase().includes(query.trim().toLowerCase()); }
@@ -1401,3 +1485,15 @@ function formatDate(value: string) { return new Intl.DateTimeFormat("ru-RU", { d
 function formatMoney(value: number) { return new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 2 }).format(value); }
 function parseOptionalNumber(value: string) { const normalized = value.trim().replace(",", "."); if (!normalized) return null; const number = Number(normalized); return Number.isFinite(number) ? number : null; }
 function todayInputValue() { return new Date().toISOString().slice(0, 10); }
+
+function notifyProductSettingsChanged(productId: string) {
+  const payload = { type: "product-settings-saved", productId, savedAt: Date.now() };
+
+  if (typeof BroadcastChannel !== "undefined") {
+    const channel = new BroadcastChannel("iiko-chef-products");
+    channel.postMessage(payload);
+    channel.close();
+  }
+
+  window.localStorage.setItem("iiko-chef-products-updated", JSON.stringify(payload));
+}

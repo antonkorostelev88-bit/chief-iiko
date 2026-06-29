@@ -46,7 +46,7 @@ echo Keep this window open while you use the site.
 echo.
 start "" "http://127.0.0.1:3000"
 if defined USE_BUNDLED (
-  "%BUNDLED_NODE%" "%BUNDLED_PNPM%" run dev -- --hostname 127.0.0.1 --port 3000
+  "%BUNDLED_NODE%" "%BUNDLED_PNPM%" exec next dev --hostname 127.0.0.1 --port 3000
 ) else (
   npm.cmd run dev -- --hostname 127.0.0.1 --port 3000
 )

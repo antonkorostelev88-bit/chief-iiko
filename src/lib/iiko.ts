@@ -22,6 +22,7 @@ const productionSettingsSchema = z.object({
   yieldUnit: z.string().optional(),
   laborMinutes: z.number().nullable().optional(),
   hourlyRate: z.number().nullable().optional(),
+  recipeEffectiveFrom: z.string().optional(),
   note: z.string().optional(),
 });
 

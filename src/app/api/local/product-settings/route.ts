@@ -7,6 +7,12 @@ export const dynamic = "force-dynamic";
 
 const settingsSchema = z.object({
   productId: z.string().min(1),
+  productName: z.string().optional(),
+  kind: z.enum(["semifinished", "dish", "other"]).optional(),
+  type: z.string().optional(),
+  article: z.string().optional(),
+  price: z.number().nullable().optional(),
+  productionPlace: z.string().optional(),
   operationName: z.string().optional(),
   batchVolume: z.number().nullable().optional(),
   batchUnit: z.string().optional(),
@@ -15,15 +21,22 @@ const settingsSchema = z.object({
   yieldUnit: z.string().optional(),
   laborMinutes: z.number().nullable().optional(),
   hourlyRate: z.number().nullable().optional(),
+  recipeEffectiveFrom: z.string().optional(),
   note: z.string().optional(),
   category: z.string().optional(),
-  recipeItems: z.array(z.object({ ingredientId: z.string().min(1), grossQuantity: z.number().nullable().optional(), unit: z.string().optional() })).optional(),
+  recipeItems: z.array(z.object({ ingredientId: z.string().min(1), grossQuantity: z.number().nullable().optional(), netQuantity: z.number().nullable().optional(), unit: z.string().optional() })).optional(),
 });
 
 export async function POST(request: NextRequest) {
   try {
     const body = settingsSchema.parse(await request.json());
     const product = saveProductSettings(body.productId, {
+      productName: body.productName,
+      kind: body.kind,
+      type: body.type,
+      article: body.article,
+      price: body.price,
+      productionPlace: body.productionPlace,
       operationName: body.operationName,
       batchVolume: body.batchVolume,
       batchUnit: body.batchUnit,
@@ -32,9 +45,10 @@ export async function POST(request: NextRequest) {
       yieldUnit: body.yieldUnit,
       laborMinutes: body.laborMinutes,
       hourlyRate: body.hourlyRate,
+      recipeEffectiveFrom: body.recipeEffectiveFrom,
       note: body.note,
       category: body.category,
-      recipeItems: body.recipeItems?.map((item) => ({ ingredientId: item.ingredientId, grossQuantity: item.grossQuantity ?? null, unit: item.unit })),
+      recipeItems: body.recipeItems?.map((item) => ({ ingredientId: item.ingredientId, grossQuantity: item.grossQuantity ?? null, netQuantity: item.netQuantity ?? null, unit: item.unit })),
     });
 
     if (!product) {
@@ -47,6 +61,5 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ ok: false, error: message }, { status: 400 });
   }
 }
-
 
 
